@@ -2,6 +2,32 @@
 
 Status: **self-hosting penuh tercapai + interpreter punya mode interaktif (REPL) + builtin core disamakan dengan syntax highlighter (vsix v1.4.0).**
 
+## -1. Bug fixes (v0.6) — BARU
+
+### 1. Keyword `jalankan`
+
+Diperbaiki supaya benar-benar menjalankan perintah shell, bukan cuma nge-print.
+
+- Sebelum: `jalankan("ls -la")` cuma nge-print string-nya (ke-alias ke `cetak`).
+- Sesudah: `jalankan("ls -la")` benar-benar dieksekusi dan return exit code-nya.
+- Implementasi: ditambahin node type `N_JALANKAN` biar eksekusi shell-nya ditangani
+  terpisah dari `cetak`.
+
+### 2. Dokumentasi `bacaFile()`
+
+Diperjelas kalau `bacaFile()` itu mengeksekusi file sebagai kode (perilakunya kayak
+import), bukan baca isinya sebagai teks biasa.
+
+- Kalau cuma mau baca isi file sebagai teks, pakai `bacaFileTeks()`.
+- Ditambahin komentar eksplisit di source code biar gak ambigu lagi.
+
+### 3. Parameter `depth` di `telusuri()`
+
+Diperbaiki supaya menerima parameter `depth` opsional sesuai dokumentasi.
+
+- Sebelum: `telusuri(url)` — cuma nerima 1 argumen.
+- Sesudah: `telusuri(url, depth)` — nerima 1 atau 2 argumen, `depth` dibatasi 0-5.
+
 ## 0. Sinkronisasi builtin core dengan `loop-lang-1_4_0.vsix` — BARU
 
 `syntaxes/loop.tmLanguage.json` di extension VS Code (v1.4.0) mendokumentasikan builtin
@@ -36,7 +62,7 @@ menurut catatan di bawah memang sengaja dikeluarkan dari paket ini (`Library/`, 
 Builtin rendah yang mendukungnya (`prima`, `acak`, `ganda`, `sambung`, `tlsSambung`, `kirim`,
 `terima`, `tutupKoneksi`, `ambil`, `telusuri`) sudah ada sebelumnya dan tidak diubah.
 
-### Rename `rayapi` ==> `telusuri`
+### Rename `rayapi` → `telusuri`
 
 Builtin web crawler (dulu `rayapi`, alias dari `crawlURL`) diganti nama jadi `telusuri` —
 lebih jelas maknanya (menelusuri link) dibanding `rayapi`. Diubah konsisten di `loop.c`
@@ -53,16 +79,16 @@ makna const/immutability baru (field `is_const` di `Node` masih belum dipakai di
 `milik` jadi reserved word, jadi tidak bisa dipakai sebagai nama variabel.
 
 Regresi sudah dicek: `test_orig.lp` lama tetap jalan, dan self-hosting 3 generasi
-(`loop.c ==> self.nasm ==> loopc ==> self2.nasm ==> loopc2 ==> self3.nasm`) tetap identik (md5 sama)
+(`loop.c → self.nasm → loopc → self2.nasm → loopc2 → self3.nasm`) tetap identik (md5 sama)
 setelah semua perubahan ini.
 
 ## 1. Self-hosting — TERCAPAI
 
 ```
-gcc loop.c ==> loop (C, dipakai SEKALI doang buat bootstrap)
-loop compiler.lp compiler.lp -o self.nasm   ==> assemble+link ==> loopc (generasi 2, native)
-loopc  compiler.lp -o self2.nasm            ==> assemble+link ==> loopc2 (generasi 3, ZERO C)
-loopc2 program.lp -o out.nasm               ==> assemble+link ==> jalan, hasil BENAR
+gcc loop.c → loop (C, dipakai SEKALI doang buat bootstrap)
+loop compiler.lp compiler.lp -o self.nasm   → assemble+link → loopc (generasi 2, native)
+loopc  compiler.lp -o self2.nasm            → assemble+link → loopc2 (generasi 3, ZERO C)
+loopc2 program.lp -o out.nasm               → assemble+link → jalan, hasil BENAR
 ```
 
 Diverifikasi jalan sampai generasi 3-4, stabil, dan **sudah dicoba ulang langsung di mesin
@@ -81,16 +107,16 @@ lokal (bukan cuma di sandbox)** — hasilnya konsisten.
    selesai baca tokennya).
 
 **Di `compiler.lp` (Loop, compiler self-hosted — bug paling banyak & paling penting di sini):**
-6. Array gak punya metadata panjang di backend NASM ==> dibikin heap-allocated + header.
-7. `panjang()`/`tambah()` cuma numeric, salah buat string/array ==> dibikin polymorphic.
-8. String literal punya newline siluman ke-append otomatis ==> dipisah dari fast-path cetak.
-9. String equality (`==`/`!=`) cuma bandingin alamat pointer, bukan isi ==> dibikin
+6. Array gak punya metadata panjang di backend NASM → dibikin heap-allocated + header.
+7. `panjang()`/`tambah()` cuma numeric, salah buat string/array → dibikin polymorphic.
+8. String literal punya newline siluman ke-append otomatis → dipisah dari fast-path cetak.
+9. String equality (`==`/`!=`) cuma bandingin alamat pointer, bukan isi → dibikin
    pembanding byte-by-byte (`__setara`).
-10. Binary native gak baca argv dari OS sama sekali ==> ditambahin pembaca argc/argv
+10. Binary native gak baca argv dari OS sama sekali → ditambahin pembaca argc/argv
     mentah di awal `_start`.
 11. **Off-by-one di `cg_selama`/`cg_ulang`/`cg_untuk`** — logic "pop" stack continue/break
     salah ngitung index, bikin `lewati`/`hentikan` di loop bersarang nyasar ke label yang
-    salah ==> infinite loop.
+    salah → infinite loop.
 12. **Interpolasi string (`#{...}`) gak diimplementasi sama sekali di NASM codegen** —
     cuma jalan di interpreter, padahal `compiler.lp` pakai `#{...}` di mana-mana buat
     generate label/offset dinamis. Diimplementasi penuh (tokenizer split jadi node
@@ -145,28 +171,51 @@ Semua garis komentar dekoratif (`═══`, `───`, em dash `—`) di `loo
 udah dibuang, sisa teks penjelasan polos + `*/` — biar konsisten sama gaya komentar ASCII
 biasa di seluruh file.
 
-## 4. Struktur folder (per keputusan: cuma bahasa + pondasi compiler)
+## 4. Struktur folder
 
 ```
 Loop/
+├── CATATAN-PROGRESS.md
+├── LICENSE.txt
+├── README.md
+├── Library/            → stdlib level tinggi, ditulis Loop murni
+│   ├── crypto.lp
+│   └── net.lp
 ├── seed/
-│   ├── loop.c        ==> interpreter + REPL + NASM codegen bootstrap (C, sekali pakai)
-│   └── compiler.lp   ==> compiler RESMI, ditulis dalam Loop, self-hosted
-└── spesifikasi/
-    ├── sintaks.lp        ==> desain sintaks dasar
-    ├── fitur-target.lp   ==> roadmap fitur
-    └── level-rendah.lp   ==> desain tier low-level (belum diimplementasi)
+│   ├── loop.c          → interpreter + REPL + NASM codegen bootstrap (C, sekali pakai)
+│   ├── loop             → binary hasil compile (regenerable)
+│   └── compiler.lp     → compiler RESMI, ditulis dalam Loop, self-hosted
+├── spesifikasi/
+│   ├── sintaks.lp        → desain sintaks dasar
+│   ├── fitur-target.lp   → roadmap fitur
+│   └── level-rendah.lp   → desain tier low-level (belum diimplementasi)
+└── tes/                → test suite
+    ├── io.lp
+    ├── jaringan.lp
+    ├── larik.lp
+    ├── matematika.lp
+    ├── sistem.lp
+    ├── string.lp
+    └── README.md
 ```
 
 `bootstrap.sh` udah dibuang dari paket ini — build manual (lihat bawah) lebih jelas dan
 gampang di-debug ketimbang script yang gampang ketinggalan zaman.
 
-Yang SENGAJA dibuang dari paket ini karena bukan bagian inti bahasa+compiler (proyek
-ekosistem terpisah yang numpang di atas bahasa ini): `Library/` (wrapper .lp buat
-crypto/net/dll), `loop_runtime/` (C runtime buat Library), `tes/`, `testi/` (file
+**UPDATE keputusan:** `Library/` (`crypto.lp`, `net.lp`) awalnya sengaja dikeluarkan
+dari paket ini (dianggap ekosistem terpisah), tapi sekarang diputuskan tetap ikut
+di-push, ditaruh di **root repo** (bukan di dalam `seed/`) — alasannya sama kayak pola
+stdlib di Python/Java/Rust/Go: wrapper level tinggi yang ditulis pake bahasanya sendiri
+emang wajar jadi bagian publik dari repo bahasa, bukan proyek terpisah. Builtin rendah
+yang dibungkusnya (`prima`, `acak`, `ganda`, dll) tetep di `seed/loop.c`, tidak dipindah.
+`tes/` juga tetep ikut di-push (bukan dibuang kayak catatan sebelumnya).
+
+Yang MASIH sengaja dibuang dari paket ini karena bukan bagian inti bahasa+compiler:
+`loop_runtime/` (C runtime lama buat Library), `testi/` (file
 percobaan lama), `src/` (stub placeholder yang udah digantikan `seed/compiler.lp`),
-`build/` (binary hasil compile, regenerable), `run.txt` (catatan rencana lama yang
+`build/` (binary hasil compile lain, regenerable), `run.txt` (catatan rencana lama yang
 isinya udah kadaluarsa, digantikan file ini).
+
 
 ## Cara build & pakai
 

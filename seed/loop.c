@@ -21,6 +21,8 @@
 #include <openssl/err.h>
 #include <regex.h>
 #include <sys/utsname.h>
+#include <libgen.h>
+#include <limits.h>
 
 extern char **environ;
 
@@ -70,7 +72,7 @@ typedef enum {
     TK_MILIK,
     /* Keyword builtin statement */
     TK_CETAK, TK_JALANKAN,
-    TK_BACAFILE, TK_TULISFILE,
+    TK_BACAFILE, TK_TULISFILE, TK_PAKAI,
     /* Keyword logika */
     TK_DAN, TK_ATAU, TK_TIDAK,
     /* Operator */
@@ -144,6 +146,7 @@ static const KwMap KEYWORDS[] = {
     {"milik",     TK_MILIK},
     {"cetak",     TK_CETAK},   {"jalankan", TK_JALANKAN},
     {"bacaFile",  TK_BACAFILE},{"tulisFile", TK_TULISFILE},
+    {"pakai",     TK_PAKAI},
     {"dan",       TK_DAN},     {"atau",     TK_ATAU},
     {"tidak",     TK_TIDAK},
     {"benar",     TK_BOOL_BENAR}, {"salah", TK_BOOL_SALAH},
@@ -274,7 +277,7 @@ typedef enum {
     /* Statement */
     N_ASSIGN, N_ASSIGN_COMPOUND,
     N_CETAK, N_JALANKAN,
-    N_BACA_FILE, N_TULIS_FILE,
+    N_BACA_FILE, N_TULIS_FILE, N_PAKAI,
     N_JIKA, N_SELAMA, N_ULANG,
     N_PILIH,
     N_COBA,
@@ -537,6 +540,16 @@ static Node *parse_stmt(Parser *P) {
                 peat(P, TK_RPAREN);
                 Node *n = node_new(N_BACA_FILE, line);
                 n->str = strdup(path->val); return n;
+            }
+
+            /* pakai nama — impor modul standard library bawaan (tanpa path/ekstensi),
+             * dicari otomatis di folder stdlib Loop. Beda dari bacaFile(path) yang
+             * butuh path lengkap ke file .lp manapun. */
+            case TK_PAKAI: {
+                peat(P, TK_PAKAI);
+                Token *nm = peat(P, TK_IDENT);
+                Node *n = node_new(N_PAKAI, line);
+                n->str = strdup(nm->val); return n;
             }
 
             /* tulisFile(path, isi) */
@@ -1137,6 +1150,32 @@ static void xor_bytes(unsigned char *dst, const unsigned char *src,
                       static int  g_lewati    = 0;
                       static int  g_error     = 0;  /* untuk coba/tangkap */
                       static char g_error_msg[MAX_STRING] = {0};
+
+                      /* Standard library bawaan (untuk keyword 'pakai') */
+                      static char g_stdlib_dir[PATH_MAX] = {0};
+                      static char *g_pakai_loaded[64];
+                      static int   g_pakai_n_loaded = 0;
+
+                      /* Cari folder stdlib: env var LOOP_STDLIB kalau di-set, kalau enggak
+                       * pakai "<folder_binary>/Library" (jadi stdlib ikut ke mana pun binary
+                       * loop dibawa/diinstall, gak tergantung cwd tempat dipanggil). */
+                      static void init_stdlib_dir(void) {
+                          const char *override = getenv("LOOP_STDLIB");
+                          if (override && override[0]) {
+                              strncpy(g_stdlib_dir, override, PATH_MAX - 1);
+                              return;
+                          }
+                          char exe[PATH_MAX] = {0};
+                          ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+                          if (len <= 0) {
+                              /* Fallback: relatif ke cwd kalau /proc/self/exe gagal (mis. non-Linux) */
+                              strncpy(g_stdlib_dir, "Library", PATH_MAX - 1);
+                              return;
+                          }
+                          exe[len] = 0;
+                          char *dir = dirname(exe); /* boleh modif buffer sendiri */
+                          snprintf(g_stdlib_dir, PATH_MAX, "%s/Library", dir);
+                      }
 
                       static Val *eval(Node *n, Env *env);
 
@@ -2694,6 +2733,32 @@ static void xor_bytes(unsigned char *dst, const unsigned char *src,
                                   val_free(isi); return val_null();
                               }
 
+                              case N_PAKAI: {
+                                  /* Sudah pernah di-'pakai' di sesi ini? Skip diam-diam,
+                                   * persis kayak Python gak nge-reimport modul yang sama. */
+                                  for (int i = 0; i < g_pakai_n_loaded; i++) {
+                                      if (strcmp(g_pakai_loaded[i], n->str) == 0) return val_null();
+                                  }
+                                  char path[PATH_MAX];
+                                  snprintf(path, sizeof(path), "%s/%s.lp", g_stdlib_dir, n->str);
+                                  FILE *f = fopen(path, "r");
+                                  if (!f) {
+                                      snprintf(g_error_msg, MAX_STRING,
+                                               "pakai: modul '%s' tidak ditemukan (dicari di %s)",
+                                               n->str, path);
+                                      g_error = 1; return val_null();
+                                  }
+                                  fseek(f, 0, SEEK_END); long sz = ftell(f); rewind(f);
+                                  char *kode = malloc(sz + 1);
+                                  fread(kode, 1, sz, f); kode[sz] = 0; fclose(f);
+                                  Val *r = run_kode(kode, env);
+                                  free(kode);
+                                  if (g_pakai_n_loaded < 64) {
+                                      g_pakai_loaded[g_pakai_n_loaded++] = strdup(n->str);
+                                  }
+                                  return r;
+                              }
+
                               case N_FUNGSI:
                                   env_set(env, n->fname, val_func(n));
                                   return val_null();
@@ -3287,7 +3352,7 @@ static void xor_bytes(unsigned char *dst, const unsigned char *src,
 
                       static int repl_node_adalah_stmt(NodeType t) {
                           return t == N_ASSIGN || t == N_ASSIGN_COMPOUND || t == N_CETAK ||
-                          t == N_BACA_FILE || t == N_TULIS_FILE ||
+                          t == N_BACA_FILE || t == N_TULIS_FILE || t == N_PAKAI ||
                           t == N_JIKA || t == N_SELAMA || t == N_ULANG || t == N_PILIH ||
                           t == N_COBA || t == N_FUNGSI ||
                           t == N_KEMBALI || t == N_HENTIKAN || t == N_LEWATI || t == N_PROGRAM;
@@ -3377,6 +3442,8 @@ static void xor_bytes(unsigned char *dst, const unsigned char *src,
                       }
 
                       int main(int argc, char **argv) {
+                          init_stdlib_dir();
+
                           if (argc < 2) {
                               run_repl();
                               return 0;
@@ -3453,7 +3520,10 @@ static void xor_bytes(unsigned char *dst, const unsigned char *src,
                           } else {
                               g_global_env = env_new(NULL);
 
-                              /* Setup argumen array (skip argv[0]) */
+                              /* Sediakan 'argumen' - argv TANPA nama binary interpreter (argv[0]),
+                               * biar konsisten sama argv standar pas program ini udah jadi
+                               * binary native berdiri sendiri: argumen[0]=nama skrip,
+                               * argumen[1]=argumen pertama, dst. */
                               int aan = argc - 1;
                               Val **av = malloc(sizeof(Val*) * (size_t)(aan > 0 ? aan : 1));
                               for (int i = 1; i < argc; i++) av[i-1] = val_str(argv[i]);

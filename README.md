@@ -7,7 +7,7 @@ Designed for automation, artificial intelligence, machine learning, modern syste
 
 [![Version](https://img.shields.io/badge/version-0.6-blueviolet)](#)
 [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-blue?logo=visualstudiocode)](#)
-[![License](https://img.shields.io/badge/license-Proprietary-red)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE.txt)
 
 </div>
 
@@ -59,7 +59,7 @@ Fixed to accept optional depth parameter as documented.
 Before: telusuri(url) — only accepted 1 argument
 After: telusuri(url, depth) — accepts 1 or 2 arguments, depth limited to 0-5
 
-For detailed technical breakdown, see FIXES_SUMMARY.md
+For detailed technical breakdown, see CATATAN-PROGRESS.md
 
 ---
 
@@ -180,6 +180,9 @@ code --install-extension loop-lang-1_4_0.vsix
 
 ```
 Loop/
+├── Library/            # Standard library, written in Loop
+│   ├── crypto.lp
+│   └── net.lp
 ├── seed/
 │   ├── loop.c          # Interpreter & runtime
 │   ├── compiler.lp     # Self-hosted compiler
@@ -192,7 +195,7 @@ Loop/
 │   ├── jaringan.lp
 ├── spesifikasi/        # Language specification
 ├── README.md
-├── FIXES_SUMMARY.md
+├── CATATAN-PROGRESS.md
 └── LICENSE.txt
 ```
 
@@ -227,7 +230,7 @@ All core features tested and working.
 
 # License
 
-Copyright 2026 Xyra77 — All Rights Reserved.
+MIT License — Copyright (c) 2026 Xyra77. See [LICENSE.txt](LICENSE.txt).
 
 ---
 
