@@ -637,6 +637,7 @@ fungsi cg_data_string(s) {
     teks lbl = "__s#{angkaTeks(CG_str_cnt)}"
     teks esc = cg_escape_str(s)
     angka slen = panjang(s)
+    cg_emit_data("    align 2   ; jamin alamat genap - bit0 dipakai penanda tag angka")
     cg_emit_data("    #{lbl}:     db #{esc}, 0")
     cg_emit_data("    #{lbl}_len: equ #{angkaTeks(slen)}")
     kembali lbl
@@ -716,12 +717,12 @@ fungsi cg_expr(node) {
 
     jika tip == "NUM" maka
         angka ni = bulatkan(node[1])
-        cg_emit("    mov  rax, #{angkaTeks(ni)}")
+        cg_emit("    mov  rax, #{angkaTeks(ni * 2 + 1)}   ; angka tag: (n<<1)|1")
         kembali 0
     akhir
 
     jika tip == "BOOL" maka
-        cg_emit("    mov  rax, #{angkaTeks(node[1])}")
+        cg_emit("    mov  rax, #{angkaTeks(node[1] * 2 + 1)}   ; bool tag")
         kembali 0
     akhir
 
@@ -785,11 +786,13 @@ fungsi cg_expr(node) {
         cg_expr(node[2])
         jika node[1] == "-" maka
             cg_emit("    neg  rax")
+            cg_emit("    add  rax, 2   ; re-tag hasil negate")
         akhir
         jika node[1] == "tidak" maka
-            cg_emit("    test rax, rax")
-            cg_emit("    setz al")
+            cg_emit("    cmp  rax, 1   ; 1 = tagged-false")
+            cg_emit("    sete al")
             cg_emit("    movzx rax, al")
+            cg_emit("    lea  rax, [rax*2 + 1]   ; re-tag bool")
         akhir
         kembali 0
     akhir
@@ -828,15 +831,15 @@ fungsi cg_binop(node) {
         teks lf   = "__df_#{lid}"
         teks le   = "__de_#{lid}"
         cg_expr(node[2])
-        cg_emit("    test rax, rax")
-        cg_emit("    jz   #{lf}")
+        cg_emit("    cmp  rax, 1   ; 1 = tagged-false")
+        cg_emit("    je   #{lf}")
         cg_expr(node[3])
-        cg_emit("    test rax, rax")
-        cg_emit("    jz   #{lf}")
-        cg_emit("    mov  rax, 1")
+        cg_emit("    cmp  rax, 1")
+        cg_emit("    je   #{lf}")
+        cg_emit("    mov  rax, 3   ; tagged true")
         cg_emit("    jmp  #{le}")
         cg_emit("#{lf}:")
-        cg_emit("    xor  rax, rax")
+        cg_emit("    mov  rax, 1   ; tagged false")
         cg_emit("#{le}:")
         kembali 0
     akhir
@@ -846,15 +849,15 @@ fungsi cg_binop(node) {
         teks lt2  = "__ot_#{lid}"
         teks le   = "__oe_#{lid}"
         cg_expr(node[2])
-        cg_emit("    test rax, rax")
-        cg_emit("    jnz  #{lt2}")
+        cg_emit("    cmp  rax, 1")
+        cg_emit("    jne  #{lt2}")
         cg_expr(node[3])
-        cg_emit("    test rax, rax")
-        cg_emit("    jnz  #{lt2}")
-        cg_emit("    xor  rax, rax")
+        cg_emit("    cmp  rax, 1")
+        cg_emit("    jne  #{lt2}")
+        cg_emit("    mov  rax, 1   ; tagged false")
         cg_emit("    jmp  #{le}")
         cg_emit("#{lt2}:")
-        cg_emit("    mov  rax, 1")
+        cg_emit("    mov  rax, 3   ; tagged true")
         cg_emit("#{le}:")
         kembali 0
     akhir
@@ -865,18 +868,38 @@ fungsi cg_binop(node) {
     cg_emit("    mov  rcx, rax")
     cg_emit("    pop  rax")
 
-    jika op == "+" maka cg_emit("    add  rax, rcx")  kembali 0 akhir
-    jika op == "-" maka cg_emit("    sub  rax, rcx")  kembali 0 akhir
-    jika op == "*" maka cg_emit("    imul rax, rcx")  kembali 0 akhir
+    jika op == "+" maka
+        cg_emit("    add  rax, rcx")
+        cg_emit("    dec  rax   ; re-tag jumlah")
+        kembali 0
+    akhir
+    jika op == "-" maka
+        cg_emit("    sub  rax, rcx")
+        cg_emit("    or   rax, 1   ; re-tag selisih")
+        kembali 0
+    akhir
+    jika op == "*" maka
+        cg_emit("    sar  rax, 1   ; lepas tag")
+        cg_emit("    sar  rcx, 1")
+        cg_emit("    imul rax, rcx")
+        cg_emit("    lea  rax, [rax*2 + 1]   ; re-tag hasil kali")
+        kembali 0
+    akhir
     jika op == "/" maka
+        cg_emit("    sar  rax, 1   ; lepas tag")
+        cg_emit("    sar  rcx, 1")
         cg_emit("    cqo")
         cg_emit("    idiv rcx")
+        cg_emit("    lea  rax, [rax*2 + 1]   ; re-tag hasil bagi")
         kembali 0
     akhir
     jika op == "%" maka
+        cg_emit("    sar  rax, 1   ; lepas tag")
+        cg_emit("    sar  rcx, 1")
         cg_emit("    cqo")
         cg_emit("    idiv rcx")
         cg_emit("    mov  rax, rdx")
+        cg_emit("    lea  rax, [rax*2 + 1]   ; re-tag sisa bagi")
         kembali 0
     akhir
 
@@ -890,16 +913,17 @@ fungsi cg_binop(node) {
         cg_emit("    mov  rdi, rax")
         cg_emit("    mov  rsi, rcx")
         cg_emit("    call __setara")
-        cg_emit("    xor  rax, 1")
+        cg_emit("    xor  rax, 2   ; toggle antara tagged-true(3)/tagged-false(1)")
         kembali 0
     akhir
 
-    cg_emit("    cmp  rax, rcx")
+    cg_emit("    cmp  rax, rcx   ; urutan tetap benar walau tertag")
     jika op == "<"  maka cg_emit("    setl  al") akhir
     jika op == ">"  maka cg_emit("    setg  al") akhir
     jika op == "<=" maka cg_emit("    setle al") akhir
     jika op == ">=" maka cg_emit("    setge al") akhir
     cg_emit("    movzx rax, al")
+    cg_emit("    lea  rax, [rax*2 + 1]   ; re-tag hasil bool")
 }
 
 fungsi cg_panggil(node) {
@@ -978,6 +1002,7 @@ fungsi cg_index(node) {
     cg_emit("    push rax")
     cg_expr(node[1])
     cg_emit("    pop  rcx")
+    cg_emit("    sar  rcx, 1   ; lepas tag indeks")
     cg_emit("    imul rcx, 8")
     cg_emit("    add  rax, rcx")
     cg_emit("    add  rax, 24   ; lewati header [MAGIC][PANJANG][KAPASITAS]")
@@ -998,12 +1023,26 @@ fungsi cg_stmt(node) {
         cg_emit("    mov  rcx, rax")
         cg_var_load(node[1])
         teks op = node[2]
-        jika op == "+=" maka cg_emit("    add  rax, rcx") akhir
-        jika op == "-=" maka cg_emit("    sub  rax, rcx") akhir
-        jika op == "*=" maka cg_emit("    imul rax, rcx") akhir
+        jika op == "+=" maka
+            cg_emit("    add  rax, rcx")
+            cg_emit("    dec  rax   ; re-tag")
+        akhir
+        jika op == "-=" maka
+            cg_emit("    sub  rax, rcx")
+            cg_emit("    or   rax, 1   ; re-tag")
+        akhir
+        jika op == "*=" maka
+            cg_emit("    sar  rax, 1   ; lepas tag")
+            cg_emit("    sar  rcx, 1")
+            cg_emit("    imul rax, rcx")
+            cg_emit("    lea  rax, [rax*2 + 1]   ; re-tag")
+        akhir
         jika op == "/=" maka
+            cg_emit("    sar  rax, 1   ; lepas tag")
+            cg_emit("    sar  rcx, 1")
             cg_emit("    cqo")
             cg_emit("    idiv rcx")
+            cg_emit("    lea  rax, [rax*2 + 1]   ; re-tag")
         akhir
         cg_var_store(node[1])
         kembali 0
@@ -1032,7 +1071,9 @@ fungsi cg_stmt(node) {
             selain
                 cg_expr(e)
                 cg_emit("    mov  rdi, rax")
-                cg_emit("    call __print_int")
+                cg_emit("    call __ke_teks   ; fix: dulu selalu __print_int, cetak var teks jadi salah")
+                cg_emit("    mov  rdi, rax")
+                cg_emit("    call __print_str_nl")
             akhir
         akhir
         kembali 0
@@ -1105,11 +1146,11 @@ fungsi cg_jika(node) {
     teks lend    = "__fi_#{lid}"
 
     cg_expr(kond)
-    cg_emit("    test rax, rax")
+    cg_emit("    cmp  rax, 1   ; 1 = tagged-false")
     jika panjang(body_f) > 0 maka
-        cg_emit("    jz   #{lelse}")
+        cg_emit("    je   #{lelse}")
     selain
-        cg_emit("    jz   #{lend}")
+        cg_emit("    je   #{lend}")
     akhir
 
     angka i = 0
@@ -1142,8 +1183,8 @@ fungsi cg_selama(node) {
 
     cg_emit("#{lcek}:")
     cg_expr(kond)
-    cg_emit("    test rax, rax")
-    cg_emit("    jz   #{lend}")
+    cg_emit("    cmp  rax, 1   ; 1 = tagged-false")
+    cg_emit("    je   #{lend}")
 
     angka i = 0
     selama i < panjang(body) {
@@ -1168,6 +1209,7 @@ fungsi cg_ulang(node) {
     teks lend      = "__ue_#{lid}"
 
     cg_expr(hitungan)
+    cg_emit("    sar  rax, 1   ; lepas tag hitungan ulang")
     angka off = cg_alloc(lctr_nm)
     cg_emit("    mov  qword [rbp#{fmt_off(off)}], rax")
 
@@ -1227,6 +1269,7 @@ fungsi cg_untuk(node) {
     cg_emit("    mov  rcx, qword [rbp#{fmt_off(i_off)}]")
     cg_emit("    imul rcx, 8")
     cg_emit("    add  rax, rcx")
+    cg_emit("    add  rax, 24   ; lewati header [MAGIC][PANJANG][KAPASITAS] - bug lama, belum pernah dilewati")
     cg_emit("    mov  rax, qword [rax]")
 
     angka var_off = cg_alloc(var_nm)
@@ -1309,6 +1352,7 @@ fungsi cg_emit_runtime() {
     cg_emit("    push rbx")
     cg_emit("    push r12")
     cg_emit("    push r13")
+    cg_emit("    sar  rdi, 1   ; lepas tag angka")
     cg_emit("    mov  rax, rdi")
     cg_emit("    lea  rbx, [rel __intbuf + 31]")
     cg_emit("    mov  byte [rbx], 0x0A")
@@ -1379,14 +1423,16 @@ fungsi cg_emit_runtime() {
     cg_emit("__print_auto:")
     cg_emit("    push rbp")
     cg_emit("    mov  rbp, rsp")
-    cg_emit("    call __print_int")
+    cg_emit("    call __ke_teks   ; fix: dulu selalu panggil __print_int, cetak string jadi salah")
+    cg_emit("    mov  rdi, rax")
+    cg_emit("    call __print_str_nl")
     cg_emit("    leave")
     cg_emit("    ret")
     cg_emit("")
 
     cg_emit("__ke_teks:")
-    cg_emit("    cmp  rdi, 0x100000")
-    cg_emit("    jb   .kt_num")
+    cg_emit("    test rdi, 1   ; ganjil = angka tertag")
+    cg_emit("    jnz  .kt_num")
     cg_emit("    mov  rax, rdi")
     cg_emit("    ret")
     cg_emit(".kt_num:")
@@ -1396,10 +1442,10 @@ fungsi cg_emit_runtime() {
     cg_emit("__setara:")
     cg_emit("    cmp  rdi, rsi")
     cg_emit("    je   .st_true")
-    cg_emit("    cmp  rdi, 0x100000")
-    cg_emit("    jb   .st_false")
-    cg_emit("    cmp  rsi, 0x100000")
-    cg_emit("    jb   .st_false")
+    cg_emit("    test rdi, 1   ; ganjil = angka tertag, tak mungkin sama tapi beda bit")
+    cg_emit("    jnz  .st_false")
+    cg_emit("    test rsi, 1")
+    cg_emit("    jnz  .st_false")
     cg_emit("    push rbx")
     cg_emit("    xor  rcx, rcx")
     cg_emit(".st_lp:")
@@ -1413,17 +1459,17 @@ fungsi cg_emit_runtime() {
     cg_emit("    jmp  .st_lp")
     cg_emit(".st_diff:")
     cg_emit("    pop  rbx")
-    cg_emit("    xor  rax, rax")
+    cg_emit("    mov  rax, 1   ; tagged false")
     cg_emit("    ret")
     cg_emit(".st_same:")
     cg_emit("    pop  rbx")
-    cg_emit("    mov  rax, 1")
+    cg_emit("    mov  rax, 3   ; tagged true")
     cg_emit("    ret")
     cg_emit(".st_false:")
-    cg_emit("    xor  rax, rax")
+    cg_emit("    mov  rax, 1   ; tagged false")
     cg_emit("    ret")
     cg_emit(".st_true:")
-    cg_emit("    mov  rax, 1")
+    cg_emit("    mov  rax, 3   ; tagged true")
     cg_emit("    ret")
     cg_emit("")
 
@@ -1453,6 +1499,7 @@ fungsi cg_emit_runtime() {
     cg_emit(".pj_arr:")
     cg_emit("    mov  rax, qword [rdi + 8]")
     cg_emit(".pj_done:")
+    cg_emit("    lea  rax, [rax*2 + 1]   ; re-tag hasil panjang()")
     cg_emit("    ret")
     cg_emit("")
 
@@ -1570,8 +1617,8 @@ fungsi cg_emit_runtime() {
     cg_emit("")
 
     cg_emit("__tambah:")
-    cg_emit("    cmp  rdi, 0x100000")
-    cg_emit("    jb   .ta_num")
+    cg_emit("    test rdi, 1   ; ganjil = angka tertag")
+    cg_emit("    jnz  .ta_num")
     cg_emit("    mov  rax, qword [rdi]")
     cg_emit("    cmp  rax, 0x4C4F4F50")
     cg_emit("    je   .ta_arr")
@@ -1579,6 +1626,7 @@ fungsi cg_emit_runtime() {
     cg_emit(".ta_num:")
     cg_emit("    mov  rax, rdi")
     cg_emit("    add  rax, rsi")
+    cg_emit("    dec  rax   ; re-tag jumlah")
     cg_emit("    ret")
     cg_emit(".ta_arr:")
     cg_emit("    jmp  __arr_append")
@@ -1593,7 +1641,9 @@ fungsi cg_emit_runtime() {
     cg_emit("    push r14")
     cg_emit("    mov  r12, rdi")
     cg_emit("    mov  r13, rsi")
+    cg_emit("    sar  r13, 1   ; lepas tag mulai")
     cg_emit("    mov  r14, rdx")
+    cg_emit("    sar  r14, 1   ; lepas tag akhir")
     cg_emit("    cmp  r13, 0")
     cg_emit("    jge  .il_a_ok")
     cg_emit("    xor  r13, r13")
@@ -1708,6 +1758,7 @@ fungsi cg_emit_runtime() {
     cg_emit("kodeKarakter:")
     cg_emit("    xor  rax, rax")
     cg_emit("    mov  al, byte [rdi]")
+    cg_emit("    lea  rax, [rax*2 + 1]   ; re-tag kode karakter")
     cg_emit("    ret")
     cg_emit("")
 
@@ -1716,6 +1767,7 @@ fungsi cg_emit_runtime() {
     cg_emit("    push r12")
     cg_emit("    mov  r12, rdi")
     cg_emit("    mov  rbx, rsi")
+    cg_emit("    sar  rbx, 1   ; lepas tag indeks")
     cg_emit("    call __strlen")
     cg_emit("    cmp  rbx, 0")
     cg_emit("    jl   .kr_empty")
@@ -1748,6 +1800,7 @@ fungsi cg_emit_runtime() {
     cg_emit("    push r12")
     cg_emit("    push r13")
     cg_emit("    mov  rbx, rdi")
+    cg_emit("    sar  rbx, 1   ; lepas tag angka")
     cg_emit("    mov  rdi, 24")
     cg_emit("    call __alloc")
     cg_emit("    mov  r12, rax")
@@ -1776,7 +1829,17 @@ fungsi cg_emit_runtime() {
     cg_emit("    dec  r13")
     cg_emit(".at_done:")
     cg_emit("    inc  r13")
-    cg_emit("    mov  rax, r13")
+    cg_emit("    ; geser string ke awal buffer (r12) - r13 bisa di alamat ganjil")
+    cg_emit("    ; tergantung jumlah digit, padahal pointer Loop wajib genap")
+    cg_emit("    mov  rdx, r12   ; rdx = kursor tujuan, r12 tetap alamat basis")
+    cg_emit(".at_shift:")
+    cg_emit("    mov  al, byte [r13]")
+    cg_emit("    mov  byte [rdx], al")
+    cg_emit("    inc  r13")
+    cg_emit("    inc  rdx")
+    cg_emit("    test al, al")
+    cg_emit("    jnz  .at_shift")
+    cg_emit("    mov  rax, r12   ; kembalikan alamat basis (selalu genap)")
     cg_emit("    pop  r13")
     cg_emit("    pop  r12")
     cg_emit("    pop  rbx")
@@ -1811,6 +1874,7 @@ fungsi cg_emit_runtime() {
     cg_emit("    jz   .ta2_ret")
     cg_emit("    neg  rax")
     cg_emit(".ta2_ret:")
+    cg_emit("    lea  rax, [rax*2 + 1]   ; re-tag hasil parse")
     cg_emit("    pop  rbx")
     cg_emit("    ret")
     cg_emit("")
@@ -1891,13 +1955,13 @@ fungsi cg_emit_runtime() {
     cg_emit("    mov  rax, 3")
     cg_emit("    mov  rdi, rbx")
     cg_emit("    syscall")
-    cg_emit("    mov  rax, 1")
+    cg_emit("    mov  rax, 3   ; tagged true (sukses)")
     cg_emit("    pop  r13")
     cg_emit("    pop  r12")
     cg_emit("    pop  rbx")
     cg_emit("    ret")
     cg_emit(".tf_fail:")
-    cg_emit("    xor  rax, rax")
+    cg_emit("    mov  rax, 1   ; tagged false (gagal)")
     cg_emit("    pop  r13")
     cg_emit("    pop  r12")
     cg_emit("    pop  rbx")
@@ -1914,7 +1978,7 @@ fungsi cg_emit_runtime() {
     cg_emit("    mov  rax, 1")
     cg_emit("    syscall")
     cg_emit("    pop  rbx")
-    cg_emit("    xor  rax, rax")
+    cg_emit("    mov  rax, 1   ; tagged 0 (nilai kembali tak terpakai)")
     cg_emit("    ret")
     cg_emit("")
 
@@ -1960,6 +2024,7 @@ fungsi cg_emit_runtime() {
     cg_emit("    add  rsp, 64")
     cg_emit("    and  rax, 0xFF00")
     cg_emit("    shr  rax, 8                  ; WEXITSTATUS")
+    cg_emit("    lea  rax, [rax*2 + 1]        ; re-tag kode keluar")
     cg_emit("    pop  r13")
     cg_emit("    pop  r12")
     cg_emit("    pop  rbx")
@@ -1968,6 +2033,7 @@ fungsi cg_emit_runtime() {
 
     cg_emit_bss("    __intbuf: resb 32")
     cg_emit_bss("    __heap_ptr: resq 1")
+    cg_emit_bss("    align 8   ; jamin pointer heap selalu genap (skema tag)")
     cg_emit_bss("    __heap: resb 200000000")
     cg_emit_bss("    __envp: resq 1")
     cg_emit_data("    __nl: db 0xA")
@@ -2027,7 +2093,30 @@ fungsi generate_nasm(prog) {
     cg_emit(".av_lp:")
     cg_emit("    cmp  rcx, r15")
     cg_emit("    jge  .av_done")
-    cg_emit("    mov  rdx, qword [r14 + rcx*8]")
+    cg_emit("    mov  rdi, qword [r14 + rcx*8]   ; pointer argv OS mentah (alamat tak terjamin genap)")
+    cg_emit("    push rcx")
+    cg_emit("    call __strlen")
+    cg_emit("    mov  r13, rax")
+    cg_emit("    mov  rdi, qword [r14 + rcx*8]")
+    cg_emit("    push rdi")
+    cg_emit("    mov  rdi, r13")
+    cg_emit("    inc  rdi")
+    cg_emit("    call __alloc   ; salin ke heap - jamin alamat genap (skema tag)")
+    cg_emit("    pop  rsi")
+    cg_emit("    mov  rdi, rax")
+    cg_emit("    push rax")
+    cg_emit("    xor  rdx, rdx")
+    cg_emit(".av_cpy:")
+    cg_emit("    cmp  rdx, r13")
+    cg_emit("    jge  .av_cpy_done")
+    cg_emit("    mov  al, byte [rsi + rdx]")
+    cg_emit("    mov  byte [rdi + rdx], al")
+    cg_emit("    inc  rdx")
+    cg_emit("    jmp  .av_cpy")
+    cg_emit(".av_cpy_done:")
+    cg_emit("    mov  byte [rdi + r13], 0")
+    cg_emit("    pop  rdx   ; alamat salinan (genap)")
+    cg_emit("    pop  rcx")
     cg_emit("    mov  rax, qword [rbp#{fmt_off(arg_off)}]")
     cg_emit("    mov  qword [rax + 24 + rcx*8], rdx")
     cg_emit("    inc  rcx")
