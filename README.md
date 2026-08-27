@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://b.top4top.io/p_3799m5jcu1.png" alt="Loop Language" width="180"/>
+  <img src="https://github.com/Xyra77/Loop/blob/main/src/Loop.png" alt="Loop Language" width="180"/>
 
 # Loop Language
 Modern programming language with Indonesian-based syntax.
