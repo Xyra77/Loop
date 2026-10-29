@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tes:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build:
+          - nama: rilis
+            flags: "-O2"
+            asan_options: ""
+          - nama: asan-ubsan
+            flags: "-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
+            # Kebocoran dasar interpreter (AST/token tidak dibebaskan saat keluar) belum
+            # dibereskan; deteksi leak dimatikan, kesalahan memori dan UB tetap fatal.
+            asan_options: "detect_leaks=0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pasang dependensi
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev python3 nasm
+
+      - name: Build (${{ matrix.build.nama }})
+        run: gcc -Wall -Wextra -Wno-unused-parameter ${{ matrix.build.flags }} -o seed/loop seed/loop.c -lm -lssl -lcrypto -lpthread
+
+      - name: Jalankan semua tes
+        env:
+          ASAN_OPTIONS: ${{ matrix.build.asan_options }}
+        run: tes/jalankan_semua.sh
+
+      - name: Rantai self-host (loop.c -> compiler.lp -> compiler native, fixpoint)
+        if: matrix.build.nama == 'rilis'
+        run: seed/bootstrap.sh

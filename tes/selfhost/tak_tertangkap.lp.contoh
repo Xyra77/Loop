@@ -1,0 +1,6 @@
+fungsi a() {
+    lempar galat("GalatJaringan", "gagal konek ke 127.0.0.1:1")
+}
+cetak "sebelum"
+a()
+cetak "TIDAK BOLEH SAMPAI SINI"
